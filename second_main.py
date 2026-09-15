@@ -1,113 +1,50 @@
-# ------------------ packages -----------------
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
-from langgraph.graph.message import add_messages
-from langgraph.graph import StateGraph, START, END
-from dotenv import load_dotenv
 import os
-import time
-from typing_extensions import TypedDict
 from typing import Annotated
-from langgraph.prebuilt import ToolNode, tools_condition
+from typing_extensions import TypedDict
+from dotenv import load_dotenv
 from langchain_core.tools import tool
-from langchain_core.messages import HumanMessage
-from requests.exceptions import ReadTimeout
-
-
-# ---------------- API KEY -----------------
+# Correct import for NVIDIA AI Endpoints
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langgraph.graph import START, END, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode , tools_condition
 load_dotenv()
-Api_key = os.getenv("NVIDIA_API_KEY")
-
-if not Api_key:
-    raise ValueError("NVIDIA_API_KEY not found in .env file")
-
-
-# ---------------- STATE OF THE AGENT -----------------
-class State(TypedDict):
+Api_Key = os.getenv("NVIDIA_API_KEY")
+@tool
+def multiply(a:int, b: int) -> str:
+    """ This tool is to Multiply a with b """
+    return f"calculation is { a * b}"
+def get_weather( location : str) -> str:
+    """This tool is used  to find weather of ceratain if its good or bad"""
+    if location in ("Mumbai", "Delhi"):
+        return "weather is good"
+    else:
+        return "weather is bad"
+# 1. Define Stat
+# e with 'messages' (plural)
+class STATE(TypedDict):
     messages: Annotated[list, add_messages]
 
+builder = StateGraph(STATE)
+tools = [multiply , get_weather]
+toolnode = ToolNode(tools = tools )
 
-Graph_builder = StateGraph(State)
-
-
-# ---------------- TOOL -----------------
-@tool
-def calculation(a: int, b: int, expression: str):
-    """
-    Calculate addition, subtraction, multiplication,
-    or division of two numbers.
-    """
-    expression = expression.lower()
-
-    if expression == "add":
-        return f"Sum is {a + b}"
-    elif expression == "subtract":
-        return f"Subtraction is {a - b}"
-    elif expression == "multiply":
-        return f"Multiplication is {a * b}"
-    elif expression == "divide":
-        if b == 0:
-            return "Cannot divide by zero."
-        return f"Division is {a / b}"
-    else:
-        return f"Unknown expression: {expression}"
+# Initialize LLM
+LLM = ChatNVIDIA(model ="nvidia/nemotron-4-340b-instruct", api_key=Api_Key , )
+LLM_with_tools = LLM.bind_tools(tools)
+# 2. Fix: Return the correct key 'messages'
+def chatbot(state: STATE):
+    response_message = LLM_with_tools.invoke(state["messages"])
+    return {"messages": [response_message]}
 
 
-# ---------------- REGISTER TOOLS -----------------
-tools_registered = [calculation]
+builder.add_node("chatbot", chatbot)
+builder.add_node("tools" , toolnode)
+builder.add_edge(START, "chatbot")
+builder.add_conditional_edges("chatbot" , tools_condition)
+builder.add_edge("tools" , "chatbot")
+Graph = builder.compile()
 
-
-# ---------------- LLM -----------------
-chatbot = ChatNVIDIA(
-    model="nvidia/nemotron-3-ultra-550b-a55b",
-    api_key=Api_key,
-    timeout=120  # increased timeout
-)
-
-
-# ---------------- LLM WITH TOOLS -----------------
-LLM_tools = chatbot.bind_tools(tools_registered)
-
-
-# ---------------- CHATBOT NODE -----------------
-def chatbot_node(state: State):
-    # keep only last 3 messages to reduce payload size
-    recent_messages = state["messages"][-3:]
-
-    for attempt in range(3):  # retry up to 3 times
-        try:
-            response = LLM_tools.invoke(recent_messages)
-            return {"messages": [response]}
-        except ReadTimeout:
-            print(f"Timeout on attempt {attempt+1}, retrying...")
-            time.sleep(5)
-
-    return {"messages": ["Service unavailable after retries."]}
-
-
-# ---------------- ADD NODES -----------------
-Graph_builder.add_node("chatbot", chatbot_node)
-Graph_builder.add_node("tools", ToolNode(tools_registered))
-
-
-# ---------------- EDGES -----------------
-Graph_builder.add_edge(START, "chatbot")
-Graph_builder.add_conditional_edges("chatbot", tools_condition)
-Graph_builder.add_edge("tools", "chatbot")
-
-
-# ---------------- COMPILE GRAPH -----------------
-graph = Graph_builder.compile()
-
-
-# ---------------- RUN AGENT -----------------
-Response = graph.invoke(
-    {
-        "messages": [
-            HumanMessage(content="Add 12 with 54")
-        ]
-    }
-)
-
-
-# ---------------- FINAL RESPONSE -----------------
-print(Response)
+# 3. Fix: Invoke using the correct dictionary structure and key
+response = Graph.invoke({"messages": ["Multiply 13 with 45"]})
+print(response)
