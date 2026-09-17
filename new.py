@@ -67,7 +67,7 @@ config = {"configurable": {"thread_id": "thread_1"}}
 
 # --- FIRST: Start the graph with a prompt that triggers the human assistance tool ---
 # change the text to something that forces the LLM to call your tool
-initial_input = {"messages": [HumanMessage(content="delete my previous information")]}
+initial_input = {"messages": [HumanMessage(content="call human assitance")]}
 
 for event in Graph.stream(initial_input, stream_mode="values", config=config):
     pass
